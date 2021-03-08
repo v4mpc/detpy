@@ -3,13 +3,16 @@ import pyudev
 import os
 import subprocess
 import re
-from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 import time
+from slack import Slack
+from threading import Thread
+from dotenv import load_dotenv
+import shutil
 
 
 class UsbDetector:
     def __init__(self, slack):
+        load_dotenv()
         self.context = pyudev.Context()
         self.monitor = pyudev.Monitor.from_netlink(self.context)
         self.monitor.filter_by('block', device_type='partition')
@@ -18,13 +21,14 @@ class UsbDetector:
     def watch(self):
         print("Watching has started")
         for device in iter(self.monitor.poll, None):
-            if device.action == 'add' and device['ID_SERIAL_SHORT'] == "0022CFF6B88BC320D78C1E59":
+
+            if device.action == 'add' and device['ID_SERIAL_SHORT'] == os.environ["ID_SERIAL_SHORT"]:
                 self.mount_point = self.mount(device.device_node)
                 self.slack.post(
                     f"Device Mounted at {self.mount_point}", 'info')
-                for x in range(10):
-                    time.sleep(3)
-                    self.slack.update(f"Copied {x} of 10 files", 'info')
+
+                worker = Worker(self.mount_point)
+                worker.start()
 
     def mount(self, device_node):
         cmd = ["udisksctl", "mount", "-b", device_node]
@@ -53,17 +57,25 @@ class UsbDetector:
     def run_command(self, command):
         return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    def slack(self, message, mtype):
-        blocks = []
-        message = self.generate_block(message, mtype)
-        blocks.append(message)
-        client = WebClient(
-            token='xoxb-1046320327431-1844711994913-sAu6XkHJQZKUSRADK5waRvSY')
-        response = client.chat_postMessage(
-            channel='#general', blocks=blocks)
+
+class Worker(Thread):
+    def __init__(self, destination_path):
+        Thread.__init__(self)
+        self.source_path = os.environ["SOURCE_PATH"]
+        self.destination_path = destination_path
+
+    def run(self):
+        files_list = self.list_files(self.source_path)
+        for f in files_list:
+            shutil.copy(os.path.join(self.source_path, f),
+                        self.destination_path)
+
+    def list_files(self, path):
+        return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
 
 
 if __name__ == "__main__":
     slack = Slack()
+
     detector = UsbDetector(slack)
     detector.watch()

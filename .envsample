@@ -1,0 +1,3 @@
+SLACK_BOT_TOKEN='your slack token'
+ID_SERIAL_SHORT='your usb serial short'
+SOURCE_PATH='your/source/path'
